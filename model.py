@@ -145,6 +145,7 @@ def compute_topology(hidden_states,
 
         for dim in range(maxdim + 1):
 
+            """
             if dim < len(diagrams) and len(diagrams[dim]) > 0:
                 lifetimes = diagrams[dim][:, 1] - diagrams[dim][:, 0]
                 betti = len(lifetimes)
@@ -157,6 +158,26 @@ def compute_topology(hidden_states,
                 long_lived = int(
                     np.sum(lifetimes > np.percentile(lifetimes, 75))
                 )
+                """
+            
+            if dim < len(diagrams) and len(diagrams[dim]) > 0:
+                dgm = diagrams[dim]
+                # Ripser returns [birth, death]. Persistence = death - birth
+                lifetimes = dgm[:, 1] - dgm[:, 0]
+                
+                topology_stats[f'betti_{dim}'] = len(lifetimes)
+                topology_stats[f'total_persistence_{dim}'] = float(np.sum(lifetimes))
+                topology_stats[f'avg_persistence_{dim}'] = float(np.mean(lifetimes))
+                topology_stats[f'max_persistence_{dim}'] = float(np.max(lifetimes))
+                topology_stats[f'var_persistence_{dim}'] = float(np.var(lifetimes))
+                topology_stats[f'long_lived_{dim}'] = int(np.sum(lifetimes > np.percentile(lifetimes, 75)))
+            
+            # Wasserstein logic
+            shift = 0.0
+            if prev_diagrams is not None and dim < len(prev_diagrams):
+                if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
+                    shift = float(wasserstein(prev_diagrams[dim], diagrams[dim]))
+            topology_stats[f'wasserstein_shift_{dim}'] = shift
 
             else:
                 betti = 0
@@ -458,16 +479,31 @@ def main():
             
             # Compute TDA (expensive, so do less frequently)
             if epoch % TDA_INTERVAL == 0:
-                print("  Computing topology...")
-                topology = analyze_topology_all_layers(model, val_loader, device, N_LAYERS)
-                history['topology'].append(topology)
+                if epoch % TDA_INTERVAL == 0:
+                print(f"\n" + "="*40)
+                print(f"TOPOLOGY REPORT: EPOCH {epoch}")
+                print("="*40)
                 
-                # Print topology summary
+                # We pass prev_topology so Wasserstein Shift can be calculated
+                current_topology = analyze_topology_all_layers(
+                    model, val_loader, device, N_LAYERS, 
+                    prev_topology=prev_topology, maxdim=2
+                )
+                
                 for layer_idx in range(N_LAYERS):
-                    topo = topology[layer_idx]
-                    print(f"    Layer {layer_idx}: Betti-0={topo['betti_0']}, "
-                          f"Betti-1={topo['betti_1']}, "
-                          f"Persistence={topo['total_persistence_1']:.3f}")
+                    t = current_topology[layer_idx]
+                    print(f"\n[LAYER {layer_idx}]")
+                    
+                    for d in range(3): # Dimensions 0, 1, 2
+                        print(f"  H{d} | Betti: {t[f'betti_{d}']:<3} | "
+                              f"Max_P: {t[f'max_persistence_{d}']:7.3f} | "
+                              f"Shift: {t[f'wasserstein_shift_{d}']:7.3f}")
+                    
+                    print(f"  ID (Intrinsic Dim): {t['intrinsic_dim']:.4f}")
+
+                # Update memory for the next shift calculation
+                prev_topology = current_topology
+                history['topology'].append(current_topology)
             else:
                 # Placeholder for non-TDA epochs (for consistent indexing)
                 if len(history['topology']) > 0:
