@@ -109,85 +109,148 @@ class TinyTransformer(nn.Module):
 # TDA FUNCTIONS
 # ============================================================================
 
-def compute_topology(hidden_states, max_samples=1000, maxdim=1):
+from scipy.linalg import eigh
+from persim import wasserstein
+
+
+def intrinsic_dimension(hidden_states):
     """
-    Compute persistent homology on hidden states
-    
-    Args:
-        hidden_states: numpy array [n_samples, hidden_dim]
-        max_samples: subsample for computational efficiency
-        maxdim: maximum homology dimension to compute
-    
-    Returns:
-        dict with topological features
+    Participation ratio intrinsic dimension estimate.
     """
-    # Subsample if needed
+    X = hidden_states - hidden_states.mean(0)
+    cov = np.cov(X, rowvar=False)
+    eigvals = np.maximum(eigh(cov, eigvals_only=True), 1e-12)
+    return float((eigvals.sum() ** 2) / np.sum(eigvals ** 2))
+
+
+def compute_topology(hidden_states,
+                     prev_diagrams=None,
+                     max_samples=800,
+                     maxdim=2):
+    """
+    Compute persistent homology up to dimension 4
+    and extract full research-grade statistics.
+    """
+
     if len(hidden_states) > max_samples:
         idx = np.random.choice(len(hidden_states), max_samples, replace=False)
         hidden_states = hidden_states[idx]
-    
-    # Compute persistent homology
+
     try:
         result = ripser(hidden_states, maxdim=maxdim)
         diagrams = result['dgms']
-        
-        # Extract Betti numbers (counting topological features)
-        betti_0 = len(diagrams[0]) - 1 if len(diagrams[0]) > 0 else 0  # Connected components
-        betti_1 = len(diagrams[1]) if len(diagrams) > 1 else 0  # Loops/holes
-        
-        # Total persistence (sum of feature lifetimes)
-        total_persistence_0 = np.sum(diagrams[0][:, 1] - diagrams[0][:, 0]) if len(diagrams[0]) > 0 else 0
-        total_persistence_1 = np.sum(diagrams[1][:, 1] - diagrams[1][:, 0]) if len(diagrams) > 1 and len(diagrams[1]) > 0 else 0
-        
-        # Average persistence (measure of topological complexity)
-        avg_persistence_1 = total_persistence_1 / max(betti_1, 1)
-        
-        return {
-            'betti_0': betti_0,
-            'betti_1': betti_1,
-            'total_persistence_0': float(total_persistence_0),
-            'total_persistence_1': float(total_persistence_1),
-            'avg_persistence_1': float(avg_persistence_1),
-            'diagrams': diagrams
-        }
+
+        topology_stats = {}
+        wasserstein_shifts = {}
+
+        for dim in range(maxdim + 1):
+
+            if dim < len(diagrams) and len(diagrams[dim]) > 0:
+                lifetimes = diagrams[dim][:, 1] - diagrams[dim][:, 0]
+                betti = len(lifetimes)
+
+                total_persistence = float(np.sum(lifetimes))
+                avg_persistence = float(np.mean(lifetimes))
+                max_persistence = float(np.max(lifetimes))
+                var_persistence = float(np.var(lifetimes))
+
+                long_lived = int(
+                    np.sum(lifetimes > np.percentile(lifetimes, 75))
+                )
+
+            else:
+                betti = 0
+                total_persistence = 0.0
+                avg_persistence = 0.0
+                max_persistence = 0.0
+                var_persistence = 0.0
+                long_lived = 0
+
+            topology_stats[f'betti_{dim}'] = betti
+            topology_stats[f'total_persistence_{dim}'] = total_persistence
+            topology_stats[f'avg_persistence_{dim}'] = avg_persistence
+            topology_stats[f'max_persistence_{dim}'] = max_persistence
+            topology_stats[f'var_persistence_{dim}'] = var_persistence
+            topology_stats[f'long_lived_{dim}'] = long_lived
+
+            # Wasserstein shift vs previous epoch (phase transition signal)
+            shift = 0.0
+            if prev_diagrams is not None:
+                if dim < len(prev_diagrams) and dim < len(diagrams):
+                    if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
+                        shift = float(
+                            wasserstein(prev_diagrams[dim], diagrams[dim])
+                        )
+
+            wasserstein_shifts[f'wasserstein_shift_{dim}'] = shift
+
+        # Intrinsic dimension
+        topology_stats['intrinsic_dim'] = intrinsic_dimension(hidden_states)
+
+        # Merge everything
+        topology_stats.update(wasserstein_shifts)
+        topology_stats['diagrams'] = diagrams
+
+        return topology_stats
+
     except Exception as e:
         print(f"TDA computation failed: {e}")
         return {
-            'betti_0': 0,
-            'betti_1': 0,
-            'total_persistence_0': 0.0,
-            'total_persistence_1': 0.0,
-            'avg_persistence_1': 0.0,
-            'diagrams': None
+            f'betti_{d}': 0 for d in range(maxdim + 1)
         }
 
 
+def analyze_topology_all_layers(model,
+                                loader,
+                                device,
+                                n_layers,
+                                prev_topology=None,
+                                maxdim=2):
+    """
+    Compute extended topology for all transformer layers.
+    """
+
+    topology_per_layer = {}
+
+    for layer_idx in range(n_layers):
+
+        hidden_states = extract_all_hidden_states(
+            model, loader, device, layer_idx
+        )
+
+        prev_diagrams = None
+        if prev_topology is not None:
+            prev_diagrams = prev_topology[layer_idx]['diagrams']
+
+        topology = compute_topology(
+            hidden_states,
+            prev_diagrams=prev_diagrams,
+            maxdim=maxdim
+        )
+
+        topology_per_layer[layer_idx] = topology
+
+    return topology_per_layer
+
+# ======================================================================
+# HIDDEN STATE EXTRACTION
+# ======================================================================
+
 def extract_all_hidden_states(model, loader, device, layer_idx):
-    """Extract hidden states for entire dataset at specific layer"""
+    """
+    Extract hidden states from a specific transformer layer
+    for the entire dataset.
+    """
     model.eval()
     all_states = []
-    
+
     with torch.no_grad():
         for inputs, _ in loader:
             inputs = inputs.to(device)
             states = model.get_hidden_states(inputs, layer_idx)
             all_states.append(states.cpu().numpy())
-    
+
     return np.vstack(all_states)
-
-
-def analyze_topology_all_layers(model, loader, device, n_layers):
-    """Compute topology for all layers"""
-    topology_per_layer = {}
-    
-    for layer_idx in range(n_layers):
-        print(f"  Analyzing layer {layer_idx}...")
-        hidden_states = extract_all_hidden_states(model, loader, device, layer_idx)
-        topology = compute_topology(hidden_states)
-        topology_per_layer[layer_idx] = topology
-    
-    return topology_per_layer
-
 
 # ============================================================================
 # TRAINING FUNCTIONS
