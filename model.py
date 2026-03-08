@@ -177,8 +177,7 @@ def compute_topology(hidden_states,
             if prev_diagrams is not None and dim < len(prev_diagrams):
                 if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
                     shift = float(wasserstein(prev_diagrams[dim], diagrams[dim]))
-            topology_stats[f'wasserstein_shift_{dim}'] = shift
-
+                    topology_stats[f'wasserstein_shift_{dim}'] = shift
             else:
                 betti = 0
                 total_persistence = 0.0
@@ -468,21 +467,22 @@ def main():
                     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
                     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
                     val_acc = 0.0
-
-            # Record basic metrics... (rest of your history code)
             
             # Record basic metrics
             history['epoch'].append(epoch)
             history['train_acc'].append(train_acc)
             history['val_acc'].append(val_acc)
             history['train_loss'].append(train_loss)
-            
+
+            # Preset Values for Epoch Loop
+            prev_topology = None
+
             # Compute TDA (expensive, so do less frequently)
             if epoch % TDA_INTERVAL == 0:
                 if epoch % TDA_INTERVAL == 0:
-                print(f"\n" + "="*40)
-                print(f"TOPOLOGY REPORT: EPOCH {epoch}")
-                print("="*40)
+                    print(f"\n" + "="*40)
+                    print(f"TOPOLOGY REPORT: EPOCH {epoch}")
+                    print("="*40)
                 
                 # We pass prev_topology so Wasserstein Shift can be calculated
                 current_topology = analyze_topology_all_layers(
