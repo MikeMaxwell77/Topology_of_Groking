@@ -433,7 +433,8 @@ def main():
     print("=" * 80)
     stage = 0 
     val_acc = 0.0
-    
+    prev_topology = None
+
     for epoch in range(NUM_EPOCHS):
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, device)
         
@@ -473,9 +474,6 @@ def main():
             history['train_acc'].append(train_acc)
             history['val_acc'].append(val_acc)
             history['train_loss'].append(train_loss)
-
-            # Preset Values for Epoch Loop
-            prev_topology = None
 
             # Compute TDA (expensive, so do less frequently)
             if epoch % TDA_INTERVAL == 0:
