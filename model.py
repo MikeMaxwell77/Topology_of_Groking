@@ -123,121 +123,59 @@ def intrinsic_dimension(hidden_states):
     return float((eigvals.sum() ** 2) / np.sum(eigvals ** 2))
 
 
-def compute_topology(hidden_states,
-                     prev_diagrams=None,
-                     max_samples=800,
-                     maxdim=2):
-    """
-    Compute persistent homology up to dimension 4
-    and extract full research-grade statistics.
-    """
-
-    # Guard againtst numpy subtract warnings
-    hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=0.0, neginf=0.0)
-
+def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=2):
     if len(hidden_states) > max_samples:
         idx = np.random.choice(len(hidden_states), max_samples, replace=False)
         hidden_states = hidden_states[idx]
+
+    hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=0.0, neginf=0.0)
 
     try:
         result = ripser(hidden_states, maxdim=maxdim)
         diagrams = result['dgms']
 
         topology_stats = {}
-        wasserstein_shifts = {}
 
         for dim in range(maxdim + 1):
-
-            """
-            if dim < len(diagrams) and len(diagrams[dim]) > 0:
-                lifetimes = diagrams[dim][:, 1] - diagrams[dim][:, 0]
-                betti = len(lifetimes)
-
-                total_persistence = float(np.sum(lifetimes))
-                avg_persistence = float(np.mean(lifetimes))
-                max_persistence = float(np.max(lifetimes))
-                var_persistence = float(np.var(lifetimes))
-
-                long_lived = int(
-                    np.sum(lifetimes > np.percentile(lifetimes, 75))
-                )
-                """
-            
             if dim < len(diagrams) and len(diagrams[dim]) > 0:
                 dgm = diagrams[dim]
-                # Ripser returns [birth, death]. Persistence = death - birth
                 lifetimes = dgm[:, 1] - dgm[:, 0]
-                
-                topology_stats[f'betti_{dim}'] = len(lifetimes)
+                topology_stats[f'betti_{dim}']             = len(lifetimes)
                 topology_stats[f'total_persistence_{dim}'] = float(np.sum(lifetimes))
-                topology_stats[f'avg_persistence_{dim}'] = float(np.mean(lifetimes))
-                topology_stats[f'max_persistence_{dim}'] = float(np.max(lifetimes))
-                topology_stats[f'var_persistence_{dim}'] = float(np.var(lifetimes))
-                topology_stats[f'long_lived_{dim}'] = int(np.sum(lifetimes > np.percentile(lifetimes, 75)))
-            
-            # Wasserstein logic
-            shift = 0.0
-            for dim in range(maxdim + 1):
-                if dim < len(diagrams) and len(diagrams[dim]) > 0:
-                    dgm = diagrams[dim]
-                    lifetimes = dgm[:, 1] - dgm[:, 0]
-                    
-                    topology_stats[f'betti_{dim}'] = len(lifetimes)
-                    topology_stats[f'total_persistence_{dim}'] = float(np.sum(lifetimes))
-                    topology_stats[f'avg_persistence_{dim}'] = float(np.mean(lifetimes))
-                    topology_stats[f'max_persistence_{dim}'] = float(np.max(lifetimes))
-                    topology_stats[f'var_persistence_{dim}'] = float(np.var(lifetimes))
-                    topology_stats[f'long_lived_{dim}'] = int(np.sum(lifetimes > np.percentile(lifetimes, 75)))
-                else:
-                    # Empty Diagram - filled with zeros
-                    topology_stats[f'betti_{dim}'] = 0
-                    topology_stats[f'total_persistence_{dim}'] = 0.0
-                    topology_stats[f'avg_persistence_{dim}'] = 0.0
-                    topology_stats[f'max_persistence_{dim}'] = 0.0
-                    topology_stats[f'var_persistence_{dim}'] = 0.0
-                    topology_stats[f'long_lived_{dim}'] = 0
+                topology_stats[f'avg_persistence_{dim}']   = float(np.mean(lifetimes))
+                topology_stats[f'max_persistence_{dim}']   = float(np.max(lifetimes))
+                topology_stats[f'var_persistence_{dim}']   = float(np.var(lifetimes))
+                topology_stats[f'long_lived_{dim}']        = int(np.sum(lifetimes > np.percentile(lifetimes, 75)))
+            else:
+                topology_stats[f'betti_{dim}']             = 0
+                topology_stats[f'total_persistence_{dim}'] = 0.0
+                topology_stats[f'avg_persistence_{dim}']   = 0.0
+                topology_stats[f'max_persistence_{dim}']   = 0.0
+                topology_stats[f'var_persistence_{dim}']   = 0.0
+                topology_stats[f'long_lived_{dim}']        = 0
 
-            # Wasserstein shift vs previous epoch
             shift = 0.0
-            if prev_diagrams is not None:
-                if dim < len(prev_diagrams) and dim < len(diagrams):
-                    if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
-                        shift = float(wasserstein(prev_diagrams[dim], diagrams[dim]))
+            if prev_diagrams is not None and dim < len(prev_diagrams) and dim < len(diagrams):
+                if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
+                    shift = float(wasserstein(prev_diagrams[dim], diagrams[dim]))
             topology_stats[f'wasserstein_shift_{dim}'] = shift
 
-            # Wasserstein shift vs previous epoch (phase transition signal)
-            """shift = 0.0
-            if prev_diagrams is not None:
-                if dim < len(prev_diagrams) and dim < len(diagrams):
-                    if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
-                        shift = float(
-                            wasserstein(prev_diagrams[dim], diagrams[dim])
-                        )
-
-            wasserstein_shifts[f'wasserstein_shift_{dim}'] = shift"""
-
-        # Intrinsic dimension
         topology_stats['intrinsic_dim'] = intrinsic_dimension(hidden_states)
-
-        # Merge everything
-        topology_stats.update(wasserstein_shifts)
         topology_stats['diagrams'] = diagrams
-
         return topology_stats
 
     except Exception as e:
         print(f"TDA computation failed: {e}")
         fallback = {'intrinsic_dim': 0.0, 'diagrams': []}
         for d in range(maxdim + 1):
-            fallback[f'betti_{d}'] = 0
+            fallback[f'betti_{d}']             = 0
             fallback[f'total_persistence_{d}'] = 0.0
-            fallback[f'avg_persistence_{d}'] = 0.0
-            fallback[f'max_persistence_{d}'] = 0.0
-            fallback[f'var_persistence_{d}'] = 0.0
-            fallback[f'long_lived_{d}'] = 0
+            fallback[f'avg_persistence_{d}']   = 0.0
+            fallback[f'max_persistence_{d}']   = 0.0
+            fallback[f'var_persistence_{d}']   = 0.0
+            fallback[f'long_lived_{d}']        = 0
             fallback[f'wasserstein_shift_{d}'] = 0.0
         return fallback
-
 
 def analyze_topology_all_layers(model,
                                 loader,
