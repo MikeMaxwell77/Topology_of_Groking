@@ -12,6 +12,14 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from ripser import ripser
 import os
+import warnings
+
+# ===========================================================================
+# Warnings
+# =========================================================================
+
+warnings.filterwarnings("ignore", category=UserWarning, module="persim")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered")
 
 # ============================================================================
 # DATA
@@ -122,6 +130,13 @@ def intrinsic_dimension(hidden_states):
     eigvals = np.maximum(eigh(cov, eigvals_only=True), 1e-12)
     return float((eigvals.sum() ** 2) / np.sum(eigvals ** 2))
 
+"""
+ripser has a problem with "non finite death times" so we need to remove them before
+computing wasserstein shift.
+"""
+# Remove infinite death points
+def remove_infinite(dgm):
+    return dgm[np.isfinite(dgm[:, 1])]
 
 def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=2):
     if len(hidden_states) > max_samples:
@@ -156,8 +171,10 @@ def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=
 
             shift = 0.0
             if prev_diagrams is not None and dim < len(prev_diagrams) and dim < len(diagrams):
-                if len(prev_diagrams[dim]) > 0 and len(diagrams[dim]) > 0:
-                    shift = float(wasserstein(prev_diagrams[dim], diagrams[dim]))
+                d1 = remove_infinite(prev_diagrams[dim])
+                d2 = remove_infinite(diagrams[dim])
+                if len(d1) > 0 and len(d2) > 0:
+                    shift = float(wasserstein(d1, d2))
             topology_stats[f'wasserstein_shift_{dim}'] = shift
 
         topology_stats['intrinsic_dim'] = intrinsic_dimension(hidden_states)
@@ -214,10 +231,6 @@ def analyze_topology_all_layers(model,
 # ======================================================================
 
 def extract_all_hidden_states(model, loader, device, layer_idx):
-    """
-    Extract hidden states from a specific transformer layer
-    for the entire dataset.
-    """
     model.eval()
     all_states = []
 
@@ -225,9 +238,18 @@ def extract_all_hidden_states(model, loader, device, layer_idx):
         for inputs, _ in loader:
             inputs = inputs.to(device)
             states = model.get_hidden_states(inputs, layer_idx)
-            all_states.append(states.cpu().numpy())
+            states_np = states.cpu().numpy()
+            if np.any(np.isnan(states_np)) or np.any(np.isinf(states_np)):
+                print(f"Warning: NaN/Inf in layer {layer_idx} hidden states, skipping batch")
+                continue
+            all_states.append(states_np)
 
-    return np.vstack(all_states)
+    if len(all_states) == 0:
+        print(f"Warning: all batches had NaN/Inf for layer {layer_idx}, returning zeros")
+        # Return a small dummy array so ripser doesn't crash
+        return np.zeros((10, model.d_model))
+
+    return np.nan_to_num(np.vstack(all_states), nan=0.0, posinf=0.0, neginf=0.0)
 
 # ============================================================================
 # TRAINING FUNCTIONS
@@ -434,10 +456,10 @@ def main():
 
             # Compute TDA (expensive, so do less frequently)
             if epoch % TDA_INTERVAL == 0:
-                if epoch % TDA_INTERVAL == 0:
-                    print(f"\n" + "="*40)
-                    print(f"TOPOLOGY REPORT: EPOCH {epoch}")
-                    print("="*40)
+                
+                print(f"\n" + "="*40)
+                print(f"TOPOLOGY REPORT: EPOCH {epoch}")
+                print("="*40)
                 
                 # We pass prev_topology so Wasserstein Shift can be calculated
                 current_topology = analyze_topology_all_layers(
