@@ -119,6 +119,7 @@ class TinyTransformer(nn.Module):
 
 from scipy.linalg import eigh
 from persim import wasserstein
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def intrinsic_dimension(hidden_states):
@@ -138,10 +139,113 @@ computing wasserstein shift.
 def remove_infinite(dgm):
     return dgm[np.isfinite(dgm[:, 1])]
 
-def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=2):
+
+def compute_simplex_score(means_matrix):
+    """
+    Measure how close class means are to forming an equiangular simplex
+    Perfect simplex = all pairwise cosine similarities equal to -1/(C-1)
+    where C is number of classes
+    """
+    if len(means_matrix) < 2:
+        return 0.0
+    
+    # Normalize to unit sphere
+    means_normalized = means_matrix / (np.linalg.norm(means_matrix, axis=1, keepdims=True) + 1e-8)
+    
+    # Compute pairwise cosine similarities
+    cos_sim = cosine_similarity(means_normalized)
+    
+    # For equiangular simplex, off-diagonal should be -1/(C-1)
+    C = len(means_matrix)
+    target = -1.0 / (C - 1)
+    
+    # Extract off-diagonal elements
+    off_diag = cos_sim[~np.eye(C, dtype=bool)]
+    
+    # Measure deviation from target (negative so higher = better)
+    simplex_score = -np.std(off_diag - target)
+    
+    return float(simplex_score)
+
+
+def compute_neural_collapse_metrics(hidden_states, labels, max_samples=1000):
+    """
+    Compute Neural Collapse metrics:
+    - NC1: Within-class variability collapse
+    - NC2: Simplex ETF formation (class means equiangular)
+    Also computes Betti-2 for 3D void detection
+    """
+    # Subsample if needed
     if len(hidden_states) > max_samples:
         idx = np.random.choice(len(hidden_states), max_samples, replace=False)
         hidden_states = hidden_states[idx]
+        labels = labels[idx]
+    
+    try:
+        # NC1: Within-class variance
+        unique_classes = np.unique(labels)
+        class_means = {}
+        for c in unique_classes:
+            class_mask = labels == c
+            if np.sum(class_mask) > 0:
+                class_means[c] = hidden_states[class_mask].mean(axis=0)
+        
+        within_class_var = 0.0
+        total_samples = 0
+        for c in unique_classes:
+            class_mask = labels == c
+            n_samples = np.sum(class_mask)
+            if n_samples > 0:
+                var = np.var(hidden_states[class_mask], axis=0).mean()
+                within_class_var += var * n_samples
+                total_samples += n_samples
+        
+        if total_samples > 0:
+            within_class_var /= total_samples
+        
+        # NC2: Simplex ETF score
+        if len(class_means) >= 2:
+            means_matrix = np.array([class_means[c] for c in sorted(class_means.keys())])
+            simplex_score = compute_simplex_score(means_matrix)
+        else:
+            simplex_score = 0.0
+        
+        # Compute Betti-2 (3D voids) on hidden states
+        result = ripser(hidden_states, maxdim=2)
+        diagrams = result['dgms']
+        
+        betti_2 = len(diagrams[2]) if len(diagrams) > 2 else 0
+        total_persistence_2 = (np.sum(diagrams[2][:, 1] - diagrams[2][:, 0]) 
+                              if len(diagrams) > 2 and len(diagrams[2]) > 0 else 0.0)
+        
+        return {
+            'nc_within_class_var': float(within_class_var),
+            'nc_simplex_score': simplex_score,
+            'nc_betti_2': betti_2,
+            'nc_total_persistence_2': float(total_persistence_2),
+            'nc_num_classes': len(class_means)
+        }
+        
+    except Exception as e:
+        print(f"Neural collapse computation failed: {e}")
+        return {
+            'nc_within_class_var': 0.0,
+            'nc_simplex_score': 0.0,
+            'nc_betti_2': 0,
+            'nc_total_persistence_2': 0.0,
+            'nc_num_classes': 0
+        }
+
+
+def compute_topology(hidden_states, labels=None, prev_diagrams=None, max_samples=800, maxdim=2):
+    """
+    Compute topology metrics including neural collapse if labels provided
+    """
+    if len(hidden_states) > max_samples:
+        idx = np.random.choice(len(hidden_states), max_samples, replace=False)
+        hidden_states = hidden_states[idx]
+        if labels is not None:
+            labels = labels[idx]
 
     hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -179,6 +283,12 @@ def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=
 
         topology_stats['intrinsic_dim'] = intrinsic_dimension(hidden_states)
         topology_stats['diagrams'] = diagrams
+        
+        # Add neural collapse metrics if labels provided
+        if labels is not None:
+            nc_metrics = compute_neural_collapse_metrics(hidden_states, labels)
+            topology_stats.update(nc_metrics)
+        
         return topology_stats
 
     except Exception as e:
@@ -192,7 +302,19 @@ def compute_topology(hidden_states, prev_diagrams=None, max_samples=800, maxdim=
             fallback[f'var_persistence_{d}']   = 0.0
             fallback[f'long_lived_{d}']        = 0
             fallback[f'wasserstein_shift_{d}'] = 0.0
+        
+        # Add empty NC metrics
+        if labels is not None:
+            fallback.update({
+                'nc_within_class_var': 0.0,
+                'nc_simplex_score': 0.0,
+                'nc_betti_2': 0,
+                'nc_total_persistence_2': 0.0,
+                'nc_num_classes': 0
+            })
+        
         return fallback
+
 
 def analyze_topology_all_layers(model,
                                 loader,
@@ -202,13 +324,13 @@ def analyze_topology_all_layers(model,
                                 maxdim=2):
     """
     Compute extended topology for all transformer layers.
+    Now includes neural collapse metrics by extracting labels.
     """
-
     topology_per_layer = {}
 
     for layer_idx in range(n_layers):
-
-        hidden_states = extract_all_hidden_states(
+        # Extract hidden states AND labels
+        hidden_states, labels = extract_all_hidden_states_with_labels(
             model, loader, device, layer_idx
         )
 
@@ -218,6 +340,7 @@ def analyze_topology_all_layers(model,
 
         topology = compute_topology(
             hidden_states,
+            labels=labels,
             prev_diagrams=prev_diagrams,
             maxdim=maxdim
         )
@@ -231,6 +354,7 @@ def analyze_topology_all_layers(model,
 # ======================================================================
 
 def extract_all_hidden_states(model, loader, device, layer_idx):
+    """Original function - just hidden states"""
     model.eval()
     all_states = []
 
@@ -246,10 +370,40 @@ def extract_all_hidden_states(model, loader, device, layer_idx):
 
     if len(all_states) == 0:
         print(f"Warning: all batches had NaN/Inf for layer {layer_idx}, returning zeros")
-        # Return a small dummy array so ripser doesn't crash
         return np.zeros((10, model.d_model))
 
     return np.nan_to_num(np.vstack(all_states), nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def extract_all_hidden_states_with_labels(model, loader, device, layer_idx):
+    """New function - returns both hidden states and labels for NC metrics"""
+    model.eval()
+    all_states = []
+    all_labels = []
+
+    with torch.no_grad():
+        for inputs, targets in loader:
+            inputs = inputs.to(device)
+            states = model.get_hidden_states(inputs, layer_idx)
+            states_np = states.cpu().numpy()
+            labels_np = targets.cpu().numpy()
+            
+            if np.any(np.isnan(states_np)) or np.any(np.isinf(states_np)):
+                print(f"Warning: NaN/Inf in layer {layer_idx} hidden states, skipping batch")
+                continue
+                
+            all_states.append(states_np)
+            all_labels.append(labels_np)
+
+    if len(all_states) == 0:
+        print(f"Warning: all batches had NaN/Inf for layer {layer_idx}, returning zeros")
+        return np.zeros((10, model.d_model)), np.zeros(10, dtype=int)
+
+    hidden_states = np.nan_to_num(np.vstack(all_states), nan=0.0, posinf=0.0, neginf=0.0)
+    labels = np.concatenate(all_labels)
+    
+    return hidden_states, labels
+
 
 # ============================================================================
 # TRAINING FUNCTIONS
@@ -477,6 +631,14 @@ def main():
                               f"Shift: {t[f'wasserstein_shift_{d}']:7.3f}")
                     
                     print(f"  ID (Intrinsic Dim): {t['intrinsic_dim']:.4f}")
+                    
+                    # Print Neural Collapse metrics if available
+                    if 'nc_within_class_var' in t:
+                        print(f"  NC | Within-Class Var: {t['nc_within_class_var']:.6f} | "
+                              f"Simplex Score: {t['nc_simplex_score']:.6f}")
+                        print(f"     | Betti-2: {t['nc_betti_2']:<3} | "
+                              f"Persistence-2: {t['nc_total_persistence_2']:7.3f} | "
+                              f"Classes: {t['nc_num_classes']}")
 
                 # Update memory for the next shift calculation
                 prev_topology = current_topology
@@ -507,7 +669,7 @@ def main():
     print(f"\nFinal validation accuracy: {final_val_acc:.4f}")
     
     # Plot results
-    #wprint("\nGenerating plots...")
+    #print("\nGenerating plots...")
     #plot_results(history)
     
     # Save history
