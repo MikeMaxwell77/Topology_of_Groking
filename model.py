@@ -299,9 +299,9 @@ def compute_dataset_topology(dataset, p, c, max_samples=2000):
     if c <= 1:
         if len(diagrams) > 1 and len(diagrams[1]) > 0:
             prominent_loops = np.sum(diagrams[1][:, 1] - diagrams[1][:, 0] > 0.1)
-            print(f"\n  ✓ Circular structure detected: {prominent_loops} prominent loops (expected for mod arithmetic)")
+            print(f"\n  ? Circular structure detected: {prominent_loops} prominent loops (expected for mod arithmetic)")
         else:
-            print(f"\n  ⚠ Warning: No loops detected (expected circular structure for mod arithmetic)")
+            print(f"\n  ? Warning: No loops detected (expected circular structure for mod arithmetic)")
     
     return {
         'diagrams': diagrams,
@@ -824,7 +824,7 @@ def main():
                         print(f"  H{d} | Betti: {t[f'betti_{d}']:<3} | "
                               f"Max_P: {t[f'max_persistence_{d}']:7.3f} | "
                               f"Shift: {t[f'wasserstein_shift_{d}']:7.3f} | "
-                              f"→Ideal: {t.get(f'wasserstein_to_ideal_{d}', 0.0):7.3f}")
+                              f"?Ideal: {t.get(f'wasserstein_to_ideal_{d}', 0.0):7.3f}")
                     
                     print(f"  ID (Intrinsic Dim): {t['intrinsic_dim']:.4f}")
                     
@@ -872,13 +872,13 @@ def main():
 
 1. **Analyzes dataset topology FIRST** before training
 2. For `c=0` (pure addition mod p), expects to find **circular structure** (Betti-1 > 0)
-3. **Tracks Wasserstein distance to ideal** (`→Ideal` column) - shows how close the model's representations are to the ground truth topology
+3. **Tracks Wasserstein distance to ideal** (`?Ideal` column) - shows how close the model's representations are to the ground truth topology
 4. **Hypothesis**: Distance to ideal should **decrease** during grokking as the model learns the true structure
 5. **Visualizes dataset** in 3D and shows persistence diagrams
 
 The output will now show:
 ```
-H1 | Betti: 45  | Max_P: 0.234 | Shift: 0.012 | →Ideal: 0.456
+H1 | Betti: 45  | Max_P: 0.234 | Shift: 0.012 | ?Ideal: 0.456
 """
 
 if __name__ == "__main__":
