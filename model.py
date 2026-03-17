@@ -244,8 +244,7 @@ def compute_dataset_topology(dataset, p, c, max_samples=2000):
     """
     Compute the ground truth topology of the dataset.
     For modular arithmetic (a^c + b^c) mod p, we expect:
-    - c=0: Should form a torus/circle (addition mod p is cyclic)
-    - c=1: Similar circular structure  
+    - c=1: circular structure  
     - c=2: More complex structure
     """
     print(f"\n" + "="*60)
@@ -681,7 +680,7 @@ def plot_results(history):
 def main():
     # Hyperparameters
     P = 113  # Modulus (prime number)
-    C = 0    # Exponent (0 for pure addition - circular structure)
+    C = 1    # Exponent (1 for pure addition - circular structure)
     D_MODEL = 128
     N_HEADS = 4
     N_LAYERS = 2
@@ -692,7 +691,7 @@ def main():
     WEIGHT_DECAY = 1.0
     NUM_EPOCHS = 10000
     LOG_INTERVAL = 100
-    TDA_INTERVAL = 500
+    TDA_INTERVAL = 100
     
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -715,7 +714,7 @@ def main():
     ideal_topology = compute_dataset_topology(full_dataset, p=P, c=C, max_samples=2000)
     
     # Visualize it
-    visualize_dataset_topology(ideal_topology, save_path='dataset_topology.png')
+    # visualize_dataset_topology(ideal_topology, save_path='dataset_topology.png')
     
     print("\n" + "="*80)
     print("STEP 2: TRAINING MODEL AND TRACKING CONVERGENCE TO IDEAL")
@@ -766,10 +765,10 @@ def main():
             # STAGE SWITCHING LOGIC
             if val_acc > .95:
                 if stage == 0:
-                    print(">>> Switching to Stage 1: Modular Addition (c=1)")
+                    print(">>> Switching to Stage 1: Modular Addition (c=2)")
                     stage = 1
-                    new_train = ModularArithmeticDataset(p=P, c=1, train=True, train_fraction=TRAIN_FRACTION)
-                    new_val = ModularArithmeticDataset(p=P, c=1, train=False, train_fraction=TRAIN_FRACTION)
+                    new_train = ModularArithmeticDataset(p=P, c=2, train=True, train_fraction=TRAIN_FRACTION)
+                    new_val = ModularArithmeticDataset(p=P, c=2, train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train])
                     val_dataset = ConcatDataset([val_dataset, new_val])
                     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -777,14 +776,14 @@ def main():
                     
                     # Recompute ideal topology for new task
                     full_dataset = ConcatDataset([train_dataset, val_dataset])
-                    ideal_topology = compute_dataset_topology(full_dataset, p=P, c=1, max_samples=2000)
+                    ideal_topology = compute_dataset_topology(full_dataset, p=P, c=2, max_samples=2000)
                     val_acc = 0.0
 
                 elif stage == 1:
-                    print(">>> Switching to Stage 2: Quadratic Modular (c=2)")
+                    print(">>> Switching to Stage 2: Quadratic Modular (c=3)")
                     stage = 2
-                    new_train_2 = ModularArithmeticDataset(p=P, c=2, train=True, train_fraction=TRAIN_FRACTION)
-                    new_val_2 = ModularArithmeticDataset(p=P, c=2, train=False, train_fraction=TRAIN_FRACTION)
+                    new_train_2 = ModularArithmeticDataset(p=P, c=3, train=True, train_fraction=TRAIN_FRACTION)
+                    new_val_2 = ModularArithmeticDataset(p=P, c=3, train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train_2])
                     val_dataset = ConcatDataset([val_dataset, new_val_2])
                     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -792,7 +791,7 @@ def main():
                     
                     # Recompute ideal topology for new task
                     full_dataset = ConcatDataset([train_dataset, val_dataset])
-                    ideal_topology = compute_dataset_topology(full_dataset, p=P, c=2, max_samples=2000)
+                    ideal_topology = compute_dataset_topology(full_dataset, p=P, c=3, max_samples=2000)
                     val_acc = 0.0
             
             # Record basic metrics
