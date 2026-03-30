@@ -679,7 +679,7 @@ def plot_results(history):
 # ============================================================================
 def main():
     # Hyperparameters
-    P = 113  # Modulus (prime number)
+    P = 37 #113  # Modulus (prime number)
     C = 1    # Exponent (1 for pure addition - circular structure)
     D_MODEL = 128
     N_HEADS = 4
@@ -851,7 +851,7 @@ def main():
                 print("\n" + "=" * 80)
                 print("GROKKING DETECTED! Validation accuracy > 90%")
                 print("=" * 80)
-    
+
     print("\n" + "=" * 80)
     print("Training complete!")
     print("=" * 80)
