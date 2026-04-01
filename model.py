@@ -27,10 +27,11 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid valu
 
 class ModularArithmeticDataset(Dataset):
     """Dataset for (a ^ c + b ^ c) mod p =d """
-    def __init__(self, p=1, c=1, train=True, train_fraction=0.3, seed=42):
+    def __init__(self, p=1, c=1, r=1, train=True, train_fraction=0.3, seed=42):
         self.p = p
+
         np.random.seed(seed)
-        R=113 #range of dataset
+        R=r #range of dataset
         # Generate ALL possible pairs
         all_pairs = []
         for a in range(R):
@@ -679,8 +680,9 @@ def plot_results(history):
 # ============================================================================
 def main():
     # Hyperparameters
-    P = 113  # Modulus (prime number)
+    P = 53  # Modulus (prime number)
     C = 1    # Exponent (1 for pure addition - circular structure)
+    R = 113  # Range of a and b (0 to R-1)
     D_MODEL = 128
     N_HEADS = 4
     N_LAYERS = 2
@@ -699,7 +701,7 @@ def main():
     
     # Create datasets
     print("Creating datasets...")
-    train_dataset = ModularArithmeticDataset(p=P, c=C, train=True, train_fraction=TRAIN_FRACTION)
+    train_dataset = ModularArithmeticDataset(p=P, c=C, r=R, train=True, train_fraction=TRAIN_FRACTION)
     val_dataset = ModularArithmeticDataset(p=P, c=C, train=False, train_fraction=TRAIN_FRACTION)
     
     # ========================================================================
@@ -728,7 +730,7 @@ def main():
     
     # Create model
     print("Creating model...")
-    model = TinyTransformer(vocab_size=P+2, d_model=D_MODEL, n_heads=N_HEADS, 
+    model = TinyTransformer(vocab_size=R+2, d_model=D_MODEL, n_heads=N_HEADS, 
                            n_layers=N_LAYERS, d_ff=D_FF).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -767,7 +769,7 @@ def main():
                 if stage == 0:
                     print(">>> Switching to Stage 1: Modular Addition (c=2)")
                     stage = 1
-                    new_train = ModularArithmeticDataset(p=P, c=2, train=True, train_fraction=TRAIN_FRACTION)
+                    new_train = ModularArithmeticDataset(p=P, c=2, r=R, train=True, train_fraction=TRAIN_FRACTION)
                     new_val = ModularArithmeticDataset(p=P, c=2, train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train])
                     val_dataset = ConcatDataset([val_dataset, new_val])
@@ -782,7 +784,7 @@ def main():
                 elif stage == 1:
                     print(">>> Switching to Stage 2: Quadratic Modular (c=3)")
                     stage = 2
-                    new_train_2 = ModularArithmeticDataset(p=P, c=3, train=True, train_fraction=TRAIN_FRACTION)
+                    new_train_2 = ModularArithmeticDataset(p=P, c=3, r=R, train=True, train_fraction=TRAIN_FRACTION)
                     new_val_2 = ModularArithmeticDataset(p=P, c=3, train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train_2])
                     val_dataset = ConcatDataset([val_dataset, new_val_2])
