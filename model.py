@@ -395,7 +395,7 @@ def compute_topology(hidden_states, labels=None, prev_diagrams=None,
         if labels is not None:
             labels = labels[idx]
 
-    hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=0.0, neginf=0.0)
+    hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=1e6, neginf=-1e6)
 
     try:
         result = ripser(hidden_states, maxdim=maxdim)
