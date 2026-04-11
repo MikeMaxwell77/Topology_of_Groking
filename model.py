@@ -397,6 +397,19 @@ def compute_topology(hidden_states, labels=None, prev_diagrams=None,
 
     hidden_states = np.nan_to_num(hidden_states, nan=0.0, posinf=1e6, neginf=-1e6)
 
+    # Normalize
+    std = np.std(hidden_states, axis=0)
+    std[std == 0] = 1.0
+    hidden_states = (hidden_states - np.mean(hidden_states, axis=0)) / std
+
+    print("DEBUG: Compute Topology")
+    print("shape:", hidden_states.shape)
+    
+    nan_count = np.isnan(hidden_states).sum()
+    inf_count = np.isinf(hidden_states).sum()
+    
+    print("NaNs:", nan_count, "| Infs:", inf_count)
+
     try:
         result = ripser(hidden_states, maxdim=maxdim)
         diagrams = result['dgms']
