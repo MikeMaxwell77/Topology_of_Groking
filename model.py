@@ -79,15 +79,15 @@ class TinyTransformer(nn.Module):
         # Embeddings
         self.embed = nn.Embedding(vocab_size, d_model)
         self.seq_len = 4
-        self.pos_embed = nn.Parameter(torch.randn(self.seq_len, d_model) * 0.02)
-        
+        self.pos_embed = nn.Parameter(torch.randn(self.seq_len, d_model) * 0.02)  
+
         # Transformer layers
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
             dim_feedforward=d_ff,
             dropout=0.0,
-            activation='relu',
+            activation="relu",
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
@@ -404,6 +404,9 @@ def compute_topology(hidden_states, labels=None, prev_diagrams=None,
         topology_stats = {}
 
         for dim in range(maxdim + 1):
+            print(f"\n  Analyzing H{dim} features...")
+            print(f"\n    Total features: {len(diagrams[dim]) if dim < len(diagrams) else 0}")
+            print(f"\n    Shape: {diagrams[dim].shape if dim < len(diagrams) else 'N/A'}")
             if dim < len(diagrams) and len(diagrams[dim]) > 0:
                 dgm = diagrams[dim]
                 lifetimes = dgm[:, 1] - dgm[:, 0]
@@ -574,7 +577,17 @@ def extract_all_hidden_states_with_labels(model, loader, device, layer_idx):
 # ============================================================================
 # TRAINING FUNCTIONS
 # ============================================================================
+def print_residuals(outputs, targets):
+    # Print the residuals at each point
+    targets_vector = np.zeros(len(outputs),len(outputs[0]), dtype=int)
+    # assign values in target
+    for target, i in targets.cpu().numpy():
+        targets_vector[i][target]=target
+    residuals = np.subtract(outputs,targets_vector)
+    print(f"Residuals: {residuals}")
 
+
+    
 def train_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = 0
@@ -586,7 +599,12 @@ def train_epoch(model, loader, optimizer, device):
         
         optimizer.zero_grad()
         outputs = model(inputs)
+        # Print residuals for debugging
+        print_residuals(outputs, targets)
+        
+        # Loss
         loss = nn.CrossEntropyLoss()(outputs, targets)
+        #loss = torch.clamp(loss, min=.3)  
         loss.backward()
         optimizer.step()
         
@@ -680,9 +698,9 @@ def plot_results(history):
 # ============================================================================
 def main():
     # Hyperparameters
-    P = 53  # Modulus (prime number)
+    P = 113  # Modulus (prime number)
     C = 1    # Exponent (1 for pure addition - circular structure)
-    R = 113  # Range of a and b (0 to R-1)
+    R = 300  # Range of a and b (0 to R-1)
     D_MODEL = 128
     N_HEADS = 4
     N_LAYERS = 2
@@ -692,8 +710,8 @@ def main():
     LR = 1e-3
     WEIGHT_DECAY = 1.0
     NUM_EPOCHS = 10000
-    LOG_INTERVAL = 100
-    TDA_INTERVAL = 100
+    LOG_INTERVAL = 1
+    TDA_INTERVAL = 10
     
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -759,18 +777,26 @@ def main():
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, device)
         
         if epoch % LOG_INTERVAL == 0:
+            # get L1 and L2 norms of weights for monitoring
+            #l1_norm = sum(p.abs().sum() for p in model.parameters())
+            #l2_norm = sum(p.pow(2).sum() for p in model.parameters()).sqrt()
+            l1_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'), norm_type=1).item()
+            l2_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'), norm_type=2).item()
+
+
+            # Rest of Code
             val_acc = evaluate(model, val_loader, device)
             
             print(f"\nEpoch {epoch:5d} | Train Loss: {train_loss:.4f} | "
-                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
+                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | L1: {l1_norm:.4f} | L2: {l2_norm:.4f}")
 
             # STAGE SWITCHING LOGIC
             if val_acc > .95:
                 if stage == 0:
-                    print(">>> Switching to Stage 1: Modular Addition (c=2)")
+                    print(">>> Switching to Stage 1: Quadratic Addition (c=2)")
                     stage = 1
                     new_train = ModularArithmeticDataset(p=P, c=2, r=R, train=True, train_fraction=TRAIN_FRACTION)
-                    new_val = ModularArithmeticDataset(p=P, c=2, train=False, train_fraction=TRAIN_FRACTION)
+                    new_val = ModularArithmeticDataset(p=P, c=2, r=R, train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train])
                     val_dataset = ConcatDataset([val_dataset, new_val])
                     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -782,10 +808,10 @@ def main():
                     val_acc = 0.0
 
                 elif stage == 1:
-                    print(">>> Switching to Stage 2: Quadratic Modular (c=3)")
+                    print(">>> Switching to Stage 2: Cubic Modular (c=3)")
                     stage = 2
                     new_train_2 = ModularArithmeticDataset(p=P, c=3, r=R, train=True, train_fraction=TRAIN_FRACTION)
-                    new_val_2 = ModularArithmeticDataset(p=P, c=3, train=False, train_fraction=TRAIN_FRACTION)
+                    new_val_2 = ModularArithmeticDataset(p=P, c=3, r=R,train=False, train_fraction=TRAIN_FRACTION)
                     train_dataset = ConcatDataset([train_dataset, new_train_2])
                     val_dataset = ConcatDataset([val_dataset, new_val_2])
                     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
